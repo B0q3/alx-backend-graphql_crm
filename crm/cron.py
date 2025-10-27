@@ -1,55 +1,68 @@
-from datetime import datetime
-from crm.models import Product
+import datetime
+from gql import gql, Client
+from gql.transport.requests import RequestsHTTPTransport
 
 def log_crm_heartbeat():
-    # Log the heartbeat message
-    with open('/tmp/crm_heartbeat_log.txt', 'a') as log_file:
-        log_file.write(f"{datetime.now().strftime('%d/%m/%Y-%H:%M:%S')} CRM is alive\n")
+    now = datetime.datetime.now().strftime("%d/%m/%Y-%H:%M:%S")
+    message = f"{now} CRM is alive"
 
-    # Optionally query the GraphQL hello field
+    # Setup GraphQL client
+    transport = RequestsHTTPTransport(
+        url="http://localhost:8000/graphql",
+        verify=False,
+        retries=3,
+    )
+    client = Client(transport=transport, fetch_schema_from_transport=False)
+
+    # Query hello field to verify endpoint is responsive
+    query = gql("{ hello }")
     try:
-        transport = RequestsHTTPTransport(
-            url='http://localhost:8000/graphql',
-            verify=True,
-            retries=3
-        )
-        client = Client(transport=transport, fetch_schema_from_transport=True)
-        query = gql("query { hello }")
         response = client.execute(query)
-        print("GraphQL endpoint response:", response)
+        status = "GraphQL OK" if "hello" in response else "GraphQL FAIL"
     except Exception as e:
-        print(f"Error querying GraphQL endpoint: {e}")
+        status = f"GraphQL ERROR: {e}"
+
+    message += f" - {status}"
+
+    # Write the heartbeat message to the log file (append mode)
+    with open("/tmp/crm_heartbeat_log.txt", "a") as f:
+        f.write(message + "\n")
 
 def update_low_stock():
-    """
-    Update low stock products by incrementing their stock by 10.
-    This function simulates the GraphQL mutation behavior directly.
-    """
+    # Setup GraphQL client
+    transport = RequestsHTTPTransport(
+        url="http://localhost:8000/graphql",
+        verify=False,
+        retries=3,
+    )
+    client = Client(transport=transport, fetch_schema_from_transport=False)
+
+    # GraphQL mutation for updating low-stock products
+    mutation = gql("""
+    mutation {
+      updateLowStockProducts {
+        updatedProducts {
+          id
+          name
+          stock
+        }
+        message
+      }
+    }
+    """)
+
+    now = datetime.datetime.now().strftime("%d/%m/%Y-%H:%M:%S")
     try:
-        # Query products with stock < 10
-        low_stock_products = Product.objects.filter(stock__lt=10)
-        updated_products = []
+        response = client.execute(mutation)
+        products = response["updateLowStockProducts"]["updatedProducts"]
+        message = response["updateLowStockProducts"]["message"]
 
-        # Increment their stock by 10 (simulating restocking)
-        for product in low_stock_products:
-            product.stock += 10
-            product.save()
-            updated_products.append(f"{product.name} (Stock: {product.stock})")
+        with open("/tmp/low_stock_updates_log.txt", "a") as f:
+            f.write(f"{now} - {message}\n")
+            for p in products:
+                f.write(f"Product: {p['name']} (ID: {p['id']}), New Stock: {p['stock']}\n")
 
-        # Log updated product names and new stock levels to low_stock_updates_log.txt with a timestamp
-        with open('low_stock_updates_log.txt', 'a') as log_file:
-            log_file.write(f"{datetime.now().strftime('%d/%m/%Y-%H:%M:%S')} - Low stock products updated successfully!\n")
-            for product in updated_products:
-                log_file.write(f"{product}\n")
-
-        print("Low stock products updated successfully!")
-        return {
-            'success': 'Low stock products updated successfully!',
-            'updated_products': updated_products
-        }
     except Exception as e:
-        print(f"Error updating low stock products: {e}")
-        return {
-            'success': f'Error: {str(e)}',
-            'updated_products': []
-        }
+        with open("/tmp/low_stock_updates_log.txt", "a") as f:
+            f.write(f"{now} - ERROR running update_low_stock: {e}\n")
+            
